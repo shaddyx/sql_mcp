@@ -62,8 +62,45 @@ func (h *Handler) Execute(ctx context.Context, _ *mcp.CallToolRequest, args Exec
 		return nil, ExecuteResult{}, err
 	}
 
-	res.Content = []mcp.Content{&mcp.TextContent{Text: "query executed successfully"}}
+	res.Content = []mcp.Content{&mcp.TextContent{Text: resultsText(results)}}
 	return res, ExecuteResult{Results: results}, nil
+}
+
+// resultsText renders the result sets as readable text so agents see the
+// actual query output, not just a success message.
+func resultsText(results []QueryResult) string {
+	if len(results) == 0 {
+		return "query executed successfully"
+	}
+
+	var b strings.Builder
+	for i, r := range results {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		if len(results) > 1 {
+			fmt.Fprintf(&b, "result %d:\n", i+1)
+		}
+		if len(r.Columns) == 0 {
+			fmt.Fprintf(&b, "rows affected: %d", r.RowsAffected)
+			continue
+		}
+		b.WriteString(strings.Join(r.Columns, "\t"))
+		b.WriteString("\n")
+		for _, row := range r.Rows {
+			for j, v := range row {
+				if j > 0 {
+					b.WriteString("\t")
+				}
+				b.WriteString(fmt.Sprintf("%v", v))
+			}
+			b.WriteString("\n")
+		}
+		if len(r.Rows) == 0 {
+			b.WriteString("(no rows)")
+		}
+	}
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 func validateExecuteArgs(args ExecuteArgs) error {

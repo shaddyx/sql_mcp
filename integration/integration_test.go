@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -104,7 +105,8 @@ func structuredContent[T any](t *testing.T, res *mcp.CallToolResult) T {
 	return out
 }
 
-func lastErrorMessage(res *mcp.CallToolResult) string {
+// lastTextContent returns the text content of a tool result, if any.
+func lastTextContent(res *mcp.CallToolResult) string {
 	for _, c := range res.Content {
 		if tc, ok := c.(*mcp.TextContent); ok {
 			return tc.Text
@@ -224,6 +226,10 @@ func tableFlow(t *testing.T, cs *mcp.ClientSession, connID string, placeholder s
 		t.Fatalf("select shape = cols %v rows %d, want 2 cols 1 row", r.Columns, len(r.Rows))
 	}
 
+	if !strings.Contains(lastTextContent(res), "alice") {
+		t.Fatalf("select text content = %q, want the result rows in text", lastTextContent(res))
+	}
+
 	return nil
 }
 
@@ -247,7 +253,7 @@ func TestIdleAutoClose(t *testing.T) {
 	if !res.IsError {
 		t.Fatal("execute after idle expected IsError")
 	}
-	msg := lastErrorMessage(res)
+	msg := lastTextContent(res)
 	if msg == "" {
 		t.Fatal("no error text returned")
 	}
