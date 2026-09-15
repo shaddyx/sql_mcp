@@ -75,7 +75,7 @@ connect("postgresql://user:password@localhost:5432/mydatabase")
 Run a SQL query on a connected database and return the results (columns, rows, rows affected).
 
 - `connection_id` (string, required): the id of the established connection.
-- `query` (string, required): the SQL query to execute.
+- `query` (string, required): the SQL query to execute. Multiple statements can be batched with semicolons; each runs one at a time and contributes a result set.
 - `params` (array, optional): parameters to bind to the query.
 - `timeout` (integer, optional): maximum time in seconds to wait for the query. Default `30`.
 

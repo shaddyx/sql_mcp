@@ -230,6 +230,29 @@ func tableFlow(t *testing.T, cs *mcp.ClientSession, connID string, placeholder s
 		t.Fatalf("select text content = %q, want the result rows in text", lastTextContent(res))
 	}
 
+	// Batched statements run one at a time and each contributes a result set.
+	res = callTool(t, cs, "execute", map[string]any{
+		"connection_id": connID,
+		"query":         "INSERT INTO demo (name) VALUES ('bob'); SELECT id, name FROM demo ORDER BY id;",
+	})
+	multiRes := structuredContent[struct {
+		Results []struct {
+			Columns      []string `json:"columns"`
+			Rows         [][]any  `json:"rows"`
+			RowsAffected int64    `json:"rows_affected"`
+		} `json:"results"`
+	}](t, res)
+	if len(multiRes.Results) != 2 {
+		t.Fatalf("multi-statement results = %d, want 2", len(multiRes.Results))
+	}
+	if got := multiRes.Results[0].RowsAffected; got != 1 {
+		t.Fatalf("multi INSERT rows_affected = %d, want 1", got)
+	}
+	if len(multiRes.Results[1].Columns) != 2 || len(multiRes.Results[1].Rows) != 2 {
+		t.Fatalf("multi SELECT shape = cols %v rows %d, want 2 cols 2 rows",
+			multiRes.Results[1].Columns, len(multiRes.Results[1].Rows))
+	}
+
 	return nil
 }
 

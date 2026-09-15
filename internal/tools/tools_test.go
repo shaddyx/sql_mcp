@@ -93,6 +93,154 @@ func TestExecuteCRUD(t *testing.T) {
 	}
 }
 
+func TestSplitStatements(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{
+			name:  "single statement without semicolon",
+			query: "SELECT 1",
+			want:  []string{"SELECT 1"},
+		},
+		{
+			name:  "single statement with trailing semicolon",
+			query: "SELECT 1;",
+			want:  []string{"SELECT 1"},
+		},
+		{
+			name:  "two statements",
+			query: "CREATE TABLE t (id INT); SELECT * FROM t;",
+			want:  []string{"CREATE TABLE t (id INT)", "SELECT * FROM t"},
+		},
+		{
+			name:  "semicolon inside string literal",
+			query: "INSERT INTO t (v) VALUES ('a;b'); SELECT 1",
+			want:  []string{"INSERT INTO t (v) VALUES ('a;b')", "SELECT 1"},
+		},
+		{
+			name:  "escaped quote inside string literal",
+			query: "INSERT INTO t (v) VALUES ('it''s;fine'); SELECT 1;",
+			want:  []string{"INSERT INTO t (v) VALUES ('it''s;fine')", "SELECT 1"},
+		},
+		{
+			name:  "semicolon inside double-quoted identifier",
+			query: `SELECT "a;b" FROM t; SELECT 2;`,
+			want:  []string{`SELECT "a;b" FROM t`, "SELECT 2"},
+		},
+		{
+			name:  "semicolon inside backtick identifier",
+			query: "SELECT `a;b` FROM t; SELECT 2;",
+			want:  []string{"SELECT `a;b` FROM t", "SELECT 2"},
+		},
+		{
+			name:  "semicolon inside line comment",
+			query: "SELECT 1 -- comment;still comment\n; SELECT 2",
+			want:  []string{"SELECT 1 -- comment;still comment", "SELECT 2"},
+		},
+		{
+			name:  "semicolon inside block comment",
+			query: "SELECT 1 /* a;b */; SELECT 2;",
+			want:  []string{"SELECT 1 /* a;b */", "SELECT 2"},
+		},
+		{
+			name:  "empty and whitespace statements dropped",
+			query: "; ;SELECT 1;; ;",
+			want:  []string{"SELECT 1"},
+		},
+		{
+			name:  "no split on semicolon before literal ends",
+			query: "SELECT 'x' ; ",
+			want:  []string{"SELECT 'x'"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := splitStatements(tt.query)
+			if len(got) != len(tt.want) {
+				t.Fatalf("splitStatements(%q) = %#v, want %#v", tt.query, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("splitStatements(%q)[%d] = %q, want %q", tt.query, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestPlaceholderCount(t *testing.T) {
+	tests := []struct {
+		name string
+		stmt string
+		want int
+	}{
+		{name: "no placeholders", stmt: "CREATE TABLE t (id INT)", want: 0},
+		{name: "one positional", stmt: "INSERT INTO t (v) VALUES (?)", want: 1},
+		{name: "two positional", stmt: "INSERT INTO t (a,b) VALUES (?,?)", want: 2},
+		{name: "postgres numbered", stmt: "INSERT INTO t (a,b) VALUES ($1,$2)", want: 2},
+		{name: "question mark in literal", stmt: "INSERT INTO t (v) VALUES ('what?')", want: 0},
+		{name: "question mark in comment", stmt: "SELECT 1 -- ?\n", want: 0},
+		{name: "postgres dollar with no question", stmt: "SELECT $1", want: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := placeholderCount(tt.stmt); got != tt.want {
+				t.Fatalf("placeholderCount(%q) = %d, want %d", tt.stmt, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExecuteMultiStatement(t *testing.T) {
+	h := newTestHandler(t)
+	id := connectTool(t, h, filepath.Join(t.TempDir(), "multi.db"))
+
+	_, r, err := h.Execute(context.Background(), &mcp.CallToolRequest{}, ExecuteArgs{
+		ConnectionID: id,
+		Query:        "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO t (name) VALUES ('alice');",
+	})
+	if err != nil {
+		t.Fatalf("Execute(multi) error = %v", err)
+	}
+	if len(r.Results) != 2 {
+		t.Fatalf("Execute(multi) results = %d, want 2", len(r.Results))
+	}
+	if r.Results[0].RowsAffected != 0 {
+		t.Fatalf("CREATE rows_affected = %d, want 0", r.Results[0].RowsAffected)
+	}
+	if r.Results[1].RowsAffected != 1 {
+		t.Fatalf("INSERT rows_affected = %d, want 1", r.Results[1].RowsAffected)
+	}
+
+	_, r, err = h.Execute(context.Background(), &mcp.CallToolRequest{}, ExecuteArgs{
+		ConnectionID: id,
+		Query:        "SELECT name FROM t WHERE name = 'alice'",
+	})
+	if err != nil {
+		t.Fatalf("Execute(SELECT) error = %v", err)
+	}
+	if len(r.Results) != 1 || len(r.Results[0].Rows) != 1 {
+		t.Fatalf("SELECT results = %+v, want 1 row", r.Results)
+	}
+}
+
+func TestExecuteNoStatements(t *testing.T) {
+	h := newTestHandler(t)
+	id := connectTool(t, h, filepath.Join(t.TempDir(), "empty.db"))
+
+	_, _, err := h.Execute(context.Background(), &mcp.CallToolRequest{}, ExecuteArgs{
+		ConnectionID: id,
+		Query:        " ; ; ",
+	})
+	if err == nil {
+		t.Fatal("Execute(empty) expected error")
+	}
+}
+
 func TestExecuteMissingConnection(t *testing.T) {
 	h := newTestHandler(t)
 

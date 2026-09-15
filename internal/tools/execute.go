@@ -113,24 +113,44 @@ func validateExecuteArgs(args ExecuteArgs) error {
 	return nil
 }
 
-// runQuery executes one SQL statement. Queries that return rows (SELECT,
+// runQuery executes a SQL batch. Statements are split on top-level
+// semicolons and run one at a time. Queries that return rows (SELECT,
 // SHOW, EXPLAIN, DESCRIBE, PRAGMA, WITH ...) produce a result set with
 // columns and rows; other statements produce a result with a row count.
+// Params are bound to each statement by placeholder count, and any
+// unused params are forwarded as-is.
 func runQuery(ctx context.Context, db *sql.DB, query string, params []any) ([]QueryResult, error) {
-	if likelyReturnsRows(query) {
-		r, err := queryResult(ctx, db, query, params)
+	stmts := splitStatements(query)
+	if len(stmts) == 0 {
+		return nil, errors.New("query contains no statements")
+	}
+
+	results := make([]QueryResult, 0, len(stmts))
+	for _, stmt := range stmts {
+		r, err := execOne(ctx, db, stmt, params)
 		if err != nil {
 			return nil, err
 		}
-		return []QueryResult{r}, nil
+		results = append(results, r)
+	}
+	return results, nil
+}
+
+func execOne(ctx context.Context, db *sql.DB, stmt string, params []any) (QueryResult, error) {
+	if likelyReturnsRows(stmt) {
+		return queryResult(ctx, db, stmt, params)
 	}
 
-	r, err := db.ExecContext(ctx, query, params...)
+	n := placeholderCount(stmt)
+	if n < len(params) {
+		params = params[:n]
+	}
+	r, err := db.ExecContext(ctx, stmt, params...)
 	if err != nil {
-		return nil, fmt.Errorf("executing query: %w", err)
+		return QueryResult{}, fmt.Errorf("executing query: %w", err)
 	}
 	affected, _ := r.RowsAffected()
-	return []QueryResult{{RowsAffected: affected}}, nil
+	return QueryResult{RowsAffected: affected}, nil
 }
 
 func queryResult(ctx context.Context, db *sql.DB, query string, params []any) (QueryResult, error) {
