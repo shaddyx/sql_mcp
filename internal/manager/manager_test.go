@@ -37,6 +37,29 @@ func TestConnectReturnsUniqueID(t *testing.T) {
 	defer m.CloseAll()
 }
 
+func TestConnectManyYieldsUniqueIDs(t *testing.T) {
+	m := NewManager(0)
+	defer m.CloseAll()
+
+	path := filepath.Join(t.TempDir(), "many.db")
+	const n = 200
+	ids := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		id, err := m.Connect(context.Background(), "sqlite://"+path)
+		if err != nil {
+			t.Fatalf("Connect() #%d error = %v", i, err)
+		}
+		ids = append(ids, id)
+	}
+	seen := make(map[string]bool, n)
+	for _, id := range ids {
+		if seen[id] {
+			t.Fatalf("duplicate connection id generated: %q", id)
+		}
+		seen[id] = true
+	}
+}
+
 func TestConnectInvalidURL(t *testing.T) {
 	m := NewManager(0)
 	defer m.CloseAll()

@@ -61,15 +61,14 @@ func (m *Manager) Connect(ctx context.Context, rawURL string) (string, error) {
 		return "", fmt.Errorf("connecting to database: %w", err)
 	}
 
-	id := newID()
+	m.mu.Lock()
+	id := m.newUniqueID()
 	c := &conn{
 		id:          id,
 		db:          db,
 		idleTimeout: m.idleTimeout,
 		lastAct:     time.Now(),
 	}
-
-	m.mu.Lock()
 	m.conns[id] = c
 	m.mu.Unlock()
 
@@ -193,10 +192,17 @@ func (a *ActiveConn) Done() {
 	})
 }
 
-func newID() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Sprintf("generating connection id: %v", err))
+// newUniqueID generates a random 6-char hex id that does not collide with any
+// live connection id. Callers must hold m.mu.
+func (m *Manager) newUniqueID() string {
+	for {
+		b := make([]byte, 3)
+		if _, err := rand.Read(b); err != nil {
+			panic(fmt.Sprintf("generating connection id: %v", err))
+		}
+		id := hex.EncodeToString(b)
+		if _, taken := m.conns[id]; !taken {
+			return id
+		}
 	}
-	return hex.EncodeToString(b)
 }
