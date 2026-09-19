@@ -371,6 +371,7 @@ func TestExecuteOutputCSVAndJSON(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(allowedDirsEnv, "{cwd}/**,"+os.TempDir()+"/**")
 			h := newTestHandler(t)
 			id := connectTool(t, h, filepath.Join(t.TempDir(), "out.db"))
 
@@ -406,6 +407,7 @@ func TestExecuteOutputCSVAndJSON(t *testing.T) {
 }
 
 func TestExecuteOutputMultipleStatements(t *testing.T) {
+	t.Setenv(allowedDirsEnv, "{cwd}/**,"+os.TempDir()+"/**")
 	h := newTestHandler(t)
 	id := connectTool(t, h, filepath.Join(t.TempDir(), "multi-out.db"))
 
@@ -432,7 +434,42 @@ func TestExecuteOutputMultipleStatements(t *testing.T) {
 	}
 }
 
+func TestExecuteOutputBlockedByAllowedDirs(t *testing.T) {
+	t.Setenv(allowedDirsEnv, "{cwd}/**")
+	h := newTestHandler(t)
+	id := connectTool(t, h, filepath.Join(t.TempDir(), "blocked.db"))
+
+	blockedPath := filepath.Join(t.TempDir(), "blocked.json")
+	_, _, err := h.Execute(context.Background(), &mcp.CallToolRequest{}, ExecuteArgs{
+		ConnectionID: id,
+		Query:        "SELECT 1 AS n",
+		OutputFormat: "json",
+		OutputPath:   blockedPath,
+	})
+	if err == nil {
+		t.Fatal("Execute(output) expected ALLOWED_DIRS rejection")
+	}
+	if _, statErr := os.Stat(blockedPath); statErr == nil {
+		t.Fatal("blocked export created a file")
+	}
+
+	t.Setenv(allowedDirsEnv, "{cwd}/**,"+filepath.Dir(blockedPath)+"/**")
+	_, r, err := h.Execute(context.Background(), &mcp.CallToolRequest{}, ExecuteArgs{
+		ConnectionID: id,
+		Query:        "SELECT 1 AS n",
+		OutputFormat: "json",
+		OutputPath:   blockedPath,
+	})
+	if err != nil {
+		t.Fatalf("Execute(output) with widened ALLOWED_DIRS error = %v", err)
+	}
+	if len(r.SavedFiles) != 1 || r.SavedFiles[0] != blockedPath {
+		t.Fatalf("SavedFiles = %#v, want [%s]", r.SavedFiles, blockedPath)
+	}
+}
+
 func TestExecuteOutputCountOnlyResult(t *testing.T) {
+	t.Setenv(allowedDirsEnv, "{cwd}/**,"+os.TempDir()+"/**")
 	h := newTestHandler(t)
 	id := connectTool(t, h, filepath.Join(t.TempDir(), "count-out.db"))
 

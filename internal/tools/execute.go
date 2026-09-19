@@ -46,6 +46,12 @@ func (h *Handler) Execute(ctx context.Context, _ *mcp.CallToolRequest, args Exec
 		return nil, ExecuteResult{}, err
 	}
 
+	if args.OutputFormat != "" {
+		if err := outputGuard().checkWritable(args.OutputPath); err != nil {
+			return nil, ExecuteResult{}, err
+		}
+	}
+
 	timeout := DefaultTimeoutSeconds
 	if args.Timeout != nil && *args.Timeout > 0 {
 		timeout = *args.Timeout

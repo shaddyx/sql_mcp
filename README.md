@@ -55,6 +55,9 @@ go run ./cmd/sql-tool -http ":8080"
 | Environment variable            | Description                                              | Default |
 | ------------------------------ | -------------------------------------------------------- | ------- |
 | `SQL_MCP_TOOL_IDLE_TIMEOUT`    | Idle connection timeout in seconds. `-1` disables auto-close. | `300` (5 minutes) |
+| `ALLOWED_DIRS`                 | Comma-separated glob patterns where `execute` may write output files (see `output_path`). `**` spans path segments, `*` and `?` stay within one segment, and `{cwd}` expands to the working directory. A pattern without glob characters names a directory and allows everything beneath it. An explicitly empty value forbids all exports. | `{cwd}/**` |
+
+Example `ALLOWED_DIRS=/tmp/**,{cwd}/**` allows creating output files anywhere under `/tmp` or under the current working directory.
 
 The inactivity timer is reset each time a query starts or finishes. If a connection is closed due to inactivity, the `execute` method returns an error instructing the agent to call `connect` again to re-establish the connection.
 
@@ -79,7 +82,7 @@ Run a SQL query on a connected database and return the results (columns, rows, r
 - `params` (array, optional): parameters to bind to the query.
 - `timeout` (integer, optional): maximum time in seconds to wait for the query. Default `30`.
 - `output_format` (string, optional): store the result sets on disk as `csv` or `json`. Requires `output_path`.
-- `output_path` (string, optional): file path to write the result sets to. When the query produces several result sets, each is written to a numbered file (`out.csv` becomes `out_1.csv`, `out_2.csv`, ...). JSON files contain an array of objects keyed by column name.
+- `output_path` (string, optional): file path to write the result sets to; must be within `ALLOWED_DIRS`. When the query produces several result sets, each is written to a numbered file (`out.csv` becomes `out_1.csv`, `out_2.csv`, ...). JSON files contain an array of objects keyed by column name.
 
 ```go
 execute("connection_id_123", "SELECT * FROM users", null, 10)
