@@ -18,11 +18,14 @@ type ExecuteArgs struct {
 	Query        string `json:"query" mcp:"the sql query to execute"`
 	Params       []any  `json:"params,omitempty" mcp:"optional parameters to bind to the sql query"`
 	Timeout      *int   `json:"timeout,omitempty" mcp:"maximum time in seconds to wait for the query, default 30"`
+	OutputFormat string `json:"output_format,omitempty" mcp:"optional format to store result sets on disk: csv or json; requires output_path"`
+	OutputPath   string `json:"output_path,omitempty" mcp:"optional file path to store the result sets in the given output_format; multiple result sets are written to numbered files"`
 }
 
 // ExecuteResult is the result of the execute tool.
 type ExecuteResult struct {
-	Results []QueryResult `json:"results"`
+	Results    []QueryResult `json:"results"`
+	SavedFiles []string      `json:"saved_files,omitempty" mcp:"paths of the files the result sets were written to"`
 }
 
 // QueryResult is a single result set.
@@ -39,7 +42,7 @@ const DefaultTimeoutSeconds = 30
 func (h *Handler) Execute(ctx context.Context, _ *mcp.CallToolRequest, args ExecuteArgs) (*mcp.CallToolResult, ExecuteResult, error) {
 	res := &mcp.CallToolResult{}
 
-	if err := validateExecuteArgs(args); err != nil {
+	if err := validateExecuteArgs(&args); err != nil {
 		return nil, ExecuteResult{}, err
 	}
 
@@ -62,8 +65,18 @@ func (h *Handler) Execute(ctx context.Context, _ *mcp.CallToolRequest, args Exec
 		return nil, ExecuteResult{}, err
 	}
 
-	res.Content = []mcp.Content{&mcp.TextContent{Text: resultsText(results)}}
-	return res, ExecuteResult{Results: results}, nil
+	text := resultsText(results)
+	var saved []string
+	if args.OutputFormat != "" {
+		saved, err = writeOutput(args.OutputPath, args.OutputFormat, results)
+		if err != nil {
+			return nil, ExecuteResult{}, err
+		}
+		text += "\n\nsaved output to: " + strings.Join(saved, ", ")
+	}
+
+	res.Content = []mcp.Content{&mcp.TextContent{Text: text}}
+	return res, ExecuteResult{Results: results, SavedFiles: saved}, nil
 }
 
 // resultsText renders the result sets as readable text so agents see the
@@ -103,12 +116,25 @@ func resultsText(results []QueryResult) string {
 	return strings.TrimSuffix(b.String(), "\n")
 }
 
-func validateExecuteArgs(args ExecuteArgs) error {
+func validateExecuteArgs(args *ExecuteArgs) error {
 	if args.ConnectionID == "" {
 		return errors.New("connection_id is required: call the connect method first")
 	}
 	if args.Query == "" {
 		return errors.New("query is required")
+	}
+
+	args.OutputFormat = strings.ToLower(strings.TrimSpace(args.OutputFormat))
+	switch args.OutputFormat {
+	case "", "csv", "json":
+	default:
+		return fmt.Errorf("output_format must be csv or json, got %q", args.OutputFormat)
+	}
+	if args.OutputFormat == "" && args.OutputPath != "" {
+		return errors.New("output_format is required when output_path is set")
+	}
+	if args.OutputFormat != "" && args.OutputPath == "" {
+		return errors.New("output_path is required when output_format is set")
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -283,6 +284,9 @@ func TestExecuteValidation(t *testing.T) {
 	}{
 		{name: "missing connection id", args: ExecuteArgs{Query: "SELECT 1"}},
 		{name: "missing query", args: ExecuteArgs{ConnectionID: "x"}},
+		{name: "output path without format", args: ExecuteArgs{ConnectionID: "x", Query: "SELECT 1", OutputPath: "/tmp/out.csv"}},
+		{name: "output format without path", args: ExecuteArgs{ConnectionID: "x", Query: "SELECT 1", OutputFormat: "csv"}},
+		{name: "unsupported output format", args: ExecuteArgs{ConnectionID: "x", Query: "SELECT 1", OutputFormat: "xml", OutputPath: "/tmp/out.xml"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -335,5 +339,110 @@ func TestExecuteTimeoutOverride(t *testing.T) {
 	}
 	if len(r.Results) != 1 {
 		t.Fatalf("Execute(Timeout=1) results = %d, want 1", len(r.Results))
+	}
+}
+
+func TestExecuteOutputCSVAndJSON(t *testing.T) {
+	tests := []struct {
+		name   string
+		format string
+		file   string
+		want   string
+	}{
+		{
+			name:   "csv",
+			format: "csv",
+			file:   "users.csv",
+			want:   "id,name\n1,alice\n",
+		},
+		{
+			name:   "json",
+			format: "json",
+			file:   "users.json",
+			want:   `[{"id":1,"name":"alice"}]`,
+		},
+		{
+			name:   "format is case insensitive",
+			format: "CSV",
+			file:   "users.csv",
+			want:   "id,name\n1,alice\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newTestHandler(t)
+			id := connectTool(t, h, filepath.Join(t.TempDir(), "out.db"))
+
+			if _, _, err := h.Execute(context.Background(), &mcp.CallToolRequest{}, ExecuteArgs{
+				ConnectionID: id,
+				Query:        "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO users (name) VALUES ('alice');",
+			}); err != nil {
+				t.Fatalf("Execute(setup) error = %v", err)
+			}
+
+			outPath := filepath.Join(t.TempDir(), "export", tt.file)
+			_, r, err := h.Execute(context.Background(), &mcp.CallToolRequest{}, ExecuteArgs{
+				ConnectionID: id,
+				Query:        "SELECT id, name FROM users",
+				OutputFormat: tt.format,
+				OutputPath:   outPath,
+			})
+			if err != nil {
+				t.Fatalf("Execute(output) error = %v", err)
+			}
+			if len(r.SavedFiles) != 1 || r.SavedFiles[0] != outPath {
+				t.Fatalf("SavedFiles = %#v, want [%s]", r.SavedFiles, outPath)
+			}
+			data, err := os.ReadFile(outPath)
+			if err != nil {
+				t.Fatalf("ReadFile(%s) error = %v", outPath, err)
+			}
+			if got := string(data); got != tt.want {
+				t.Fatalf("file content = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExecuteOutputMultipleStatements(t *testing.T) {
+	h := newTestHandler(t)
+	id := connectTool(t, h, filepath.Join(t.TempDir(), "multi-out.db"))
+
+	if _, _, err := h.Execute(context.Background(), &mcp.CallToolRequest{}, ExecuteArgs{
+		ConnectionID: id,
+		Query:        "CREATE TABLE a (v INTEGER); INSERT INTO a VALUES (1);",
+	}); err != nil {
+		t.Fatalf("Execute(setup) error = %v", err)
+	}
+
+	dir := t.TempDir()
+	_, r, err := h.Execute(context.Background(), &mcp.CallToolRequest{}, ExecuteArgs{
+		ConnectionID: id,
+		Query:        "SELECT v FROM a; SELECT 42 AS answer;",
+		OutputFormat: "csv",
+		OutputPath:   filepath.Join(dir, "res.csv"),
+	})
+	if err != nil {
+		t.Fatalf("Execute(output) error = %v", err)
+	}
+	want := []string{filepath.Join(dir, "res_1.csv"), filepath.Join(dir, "res_2.csv")}
+	if len(r.SavedFiles) != 2 || r.SavedFiles[0] != want[0] || r.SavedFiles[1] != want[1] {
+		t.Fatalf("SavedFiles = %#v, want %#v", r.SavedFiles, want)
+	}
+}
+
+func TestExecuteOutputCountOnlyResult(t *testing.T) {
+	h := newTestHandler(t)
+	id := connectTool(t, h, filepath.Join(t.TempDir(), "count-out.db"))
+
+	_, _, err := h.Execute(context.Background(), &mcp.CallToolRequest{}, ExecuteArgs{
+		ConnectionID: id,
+		Query:        "CREATE TABLE t (v INTEGER)",
+		OutputFormat: "json",
+		OutputPath:   filepath.Join(t.TempDir(), "t.json"),
+	})
+	if err == nil {
+		t.Fatal("Execute(output) expected error when no result sets carry rows")
 	}
 }

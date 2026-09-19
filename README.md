@@ -78,9 +78,12 @@ Run a SQL query on a connected database and return the results (columns, rows, r
 - `query` (string, required): the SQL query to execute. Multiple statements can be batched with semicolons; each runs one at a time and contributes a result set.
 - `params` (array, optional): parameters to bind to the query.
 - `timeout` (integer, optional): maximum time in seconds to wait for the query. Default `30`.
+- `output_format` (string, optional): store the result sets on disk as `csv` or `json`. Requires `output_path`.
+- `output_path` (string, optional): file path to write the result sets to. When the query produces several result sets, each is written to a numbered file (`out.csv` becomes `out_1.csv`, `out_2.csv`, ...). JSON files contain an array of objects keyed by column name.
 
 ```go
 execute("connection_id_123", "SELECT * FROM users", null, 10)
+execute("connection_id_123", "SELECT * FROM users", null, 10, "csv", "/tmp/users.csv")
 ```
 
 ### disconnect
