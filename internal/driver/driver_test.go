@@ -59,8 +59,60 @@ func TestOpenPlainSQLitePath(t *testing.T) {
 }
 
 func TestOpenUnsupported(t *testing.T) {
-	if _, err := Open("oracle://user:pass@host/db"); err == nil {
+	_, err := Open("oracle://user:pass@host/db")
+	if err == nil {
 		t.Fatal("Open() expected error for unsupported scheme")
+	}
+	want := `unsupported connection url: "oracle://user:pass@host/db"`
+	if err.Error() != want {
+		t.Errorf("Open() error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestOpenSQLiteFilePrefix(t *testing.T) {
+	// sql.Open is lazy, so a nonexistent path still succeeds and pins the
+	// "file:" prefix branch of the SQLite matcher.
+	db, err := Open("file:/tmp/nonexistent-review.db")
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer db.Close()
+	if db == nil {
+		t.Fatal("Open() returned nil db")
+	}
+}
+
+func TestSupportedList(t *testing.T) {
+	want := "PostgreSQL (postgres:// / postgresql://), MySQL (mysql://), " +
+		"SQLite (sqlite:// / file: / plain file path)"
+	got := SupportedList()
+	if got != want {
+		t.Errorf("SupportedList() = %q, want %q", got, want)
+	}
+}
+
+func TestSupported(t *testing.T) {
+	got := Supported()
+	if len(got) != 3 {
+		t.Fatalf("Supported() returned %d engines, want 3", len(got))
+	}
+
+	wantNames := []string{"PostgreSQL", "MySQL", "SQLite"}
+	for i, name := range wantNames {
+		if got[i].Name != name {
+			t.Errorf("Supported()[%d].Name = %q, want %q", i, got[i].Name, name)
+		}
+	}
+
+	// Mutating the returned slice must not affect subsequent calls.
+	got[0].Name = "Mutated"
+	got[0].Schemes[0] = "mutated://"
+	fresh := Supported()
+	if fresh[0].Name != "PostgreSQL" {
+		t.Errorf("Supported()[0].Name = %q after mutation, want %q", fresh[0].Name, "PostgreSQL")
+	}
+	if fresh[0].Schemes[0] != "postgres://" {
+		t.Errorf("Supported()[0].Schemes[0] = %q after mutation, want %q", fresh[0].Schemes[0], "postgres://")
 	}
 }
 

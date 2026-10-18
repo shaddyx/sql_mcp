@@ -27,18 +27,20 @@ func main() {
 	m := manager.NewManager(idleTimeout)
 	h := tools.NewHandler(m)
 
-	server := mcp.NewServer(&mcp.Implementation{Name: "sql-tool"}, nil)
+	server := mcp.NewServer(&mcp.Implementation{Name: "sql-tool"}, &mcp.ServerOptions{
+		Instructions: tools.ServerInstructions(),
+	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "connect",
-		Description: "Establish a connection to a SQL database, returning a connection id",
+		Description: tools.ConnectDescription(),
 	}, h.Connect)
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "execute",
-		Description: "Run a SQL query on a connected database and return the query results",
+		Description: tools.ExecuteDescription(),
 	}, h.Execute)
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "disconnect",
-		Description: "Close an established database connection, freeing up resources",
+		Description: tools.DisconnectDescription(),
 	}, h.Disconnect)
 
 	if *httpAddr != "" {

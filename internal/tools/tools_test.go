@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"sql-tool/internal/driver"
 	"sql-tool/internal/manager"
 )
 
@@ -335,5 +337,42 @@ func TestExecuteTimeoutOverride(t *testing.T) {
 	}
 	if len(r.Results) != 1 {
 		t.Fatalf("Execute(Timeout=1) results = %d, want 1", len(r.Results))
+	}
+}
+
+func TestServerInstructions(t *testing.T) {
+	got := ServerInstructions()
+
+	list := driver.SupportedList()
+	if !strings.Contains(got, list) {
+		t.Errorf("ServerInstructions() = %q, want it to contain %q", got, list)
+	}
+	for _, want := range []string{"psql", "connect"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("ServerInstructions() = %q, want it to mention %q", got, want)
+		}
+	}
+}
+
+func TestToolDescriptions(t *testing.T) {
+	connect := ConnectDescription()
+	if !strings.Contains(connect, driver.SupportedList()) {
+		t.Errorf("ConnectDescription() = %q, want it to contain %q", connect, driver.SupportedList())
+	}
+	if !strings.Contains(connect, "psql") {
+		t.Errorf("ConnectDescription() = %q, want it to mention command-line clients", connect)
+	}
+
+	execute := ExecuteDescription()
+	if !strings.Contains(execute, "connection_id") {
+		t.Errorf("ExecuteDescription() = %q, want it to mention connection_id", execute)
+	}
+	if !strings.Contains(execute, "connect again") {
+		t.Errorf("ExecuteDescription() = %q, want it to mention re-establishing the connection", execute)
+	}
+
+	disconnect := DisconnectDescription()
+	if !strings.Contains(disconnect, "Close an established database connection") {
+		t.Errorf("DisconnectDescription() = %q, want it to describe closing a connection", disconnect)
 	}
 }

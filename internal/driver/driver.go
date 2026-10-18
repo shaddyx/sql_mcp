@@ -11,6 +11,71 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// Engine describes a supported database engine and the connection-url forms it accepts.
+type Engine struct {
+	Name    string
+	Schemes []string // human-readable accepted forms, e.g. "postgres://", "postgresql://"
+}
+
+// engine pairs an Engine's metadata with the logic that recognizes its url
+// forms and opens a *sql.DB for them.
+type engine struct {
+	Engine
+	match func(u *url.URL, raw string) bool
+	open  func(u *url.URL, raw string) (*sql.DB, error)
+}
+
+// registry is the single source of truth for the databases this server
+// supports: metadata and opening logic live in one entry per engine, so they
+// cannot drift apart. Matching order matters: exact scheme checks first, then
+// the "file:" prefix, then plain filesystem paths.
+var registry = []engine{
+	{
+		Engine: Engine{Name: "PostgreSQL", Schemes: []string{"postgres://", "postgresql://"}},
+		match: func(u *url.URL, _ string) bool {
+			return u.Scheme == "postgres" || u.Scheme == "postgresql"
+		},
+		open: openPostgres,
+	},
+	{
+		Engine: Engine{Name: "MySQL", Schemes: []string{"mysql://"}},
+		match:  func(u *url.URL, _ string) bool { return u.Scheme == "mysql" },
+		open:   openMySQL,
+	},
+	{
+		Engine: Engine{Name: "SQLite", Schemes: []string{"sqlite://", "file:", "plain file path"}},
+		match: func(u *url.URL, raw string) bool {
+			return u.Scheme == "sqlite" ||
+				strings.HasPrefix(raw, "file:") ||
+				(!u.IsAbs() && isPlainPath(raw))
+		},
+		open: openSQLite,
+	},
+}
+
+// Supported returns a copy of the engine registry.
+func Supported() []Engine {
+	out := make([]Engine, len(registry))
+	for i, e := range registry {
+		out[i] = Engine{
+			Name:    e.Name,
+			Schemes: append([]string(nil), e.Schemes...),
+		}
+	}
+	return out
+}
+
+// SupportedList renders the registry as a single human-readable line, e.g.
+// "PostgreSQL (postgres:// / postgresql://), MySQL (mysql://), ...".
+func SupportedList() string {
+	engines := Supported()
+	parts := make([]string, 0, len(engines))
+	for _, e := range engines {
+		parts = append(parts, fmt.Sprintf("%s (%s)", e.Name, strings.Join(e.Schemes, " / ")))
+	}
+	return strings.Join(parts, ", ")
+}
+
 // Open parses a connection url and opens a *sql.DB for the matching engine.
 // Supported schemes: postgres/postgresql, mysql, sqlite (a plain file path is
 // also accepted and treated as a SQLite database).
@@ -20,54 +85,57 @@ func Open(rawURL string) (*sql.DB, error) {
 		return nil, fmt.Errorf("invalid connection url: %w", err)
 	}
 
-	switch {
-	case u.Scheme == "postgres" || u.Scheme == "postgresql":
-		dsn, err := postgresDSN(u)
-		if err != nil {
-			return nil, err
+	for _, e := range registry {
+		if e.match(u, rawURL) {
+			return e.open(u, rawURL)
 		}
-		db, err := sql.Open("postgres", dsn)
-		if err != nil {
-			return nil, fmt.Errorf("opening postgres connection: %w", err)
-		}
-		return db, nil
-
-	case u.Scheme == "mysql":
-		dsn, err := mysqlDSN(u)
-		if err != nil {
-			return nil, err
-		}
-		db, err := sql.Open("mysql", dsn)
-		if err != nil {
-			return nil, fmt.Errorf("opening mysql connection: %w", err)
-		}
-		return db, nil
-
-	case u.Scheme == "sqlite":
-		db, err := sql.Open("sqlite", u.Opaque)
-		if err != nil {
-			return nil, fmt.Errorf("opening sqlite connection: %w", err)
-		}
-		return db, nil
-
-	case strings.HasPrefix(rawURL, "file:"):
-		path := strings.TrimPrefix(rawURL, "file:")
-		db, err := sql.Open("sqlite", path)
-		if err != nil {
-			return nil, fmt.Errorf("opening sqlite connection: %w", err)
-		}
-		return db, nil
-
-	case !u.IsAbs() && isPlainPath(rawURL):
-		db, err := sql.Open("sqlite", rawURL)
-		if err != nil {
-			return nil, fmt.Errorf("opening sqlite connection: %w", err)
-		}
-		return db, nil
-
-	default:
-		return nil, fmt.Errorf("unsupported connection url: %q", rawURL)
 	}
+	return nil, fmt.Errorf("unsupported connection url: %q", rawURL)
+}
+
+// openPostgres opens a postgres/postgresql connection from the parsed url.
+func openPostgres(u *url.URL, _ string) (*sql.DB, error) {
+	dsn, err := postgresDSN(u)
+	if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("opening postgres connection: %w", err)
+	}
+	return db, nil
+}
+
+// openMySQL opens a mysql connection from the parsed url.
+func openMySQL(u *url.URL, _ string) (*sql.DB, error) {
+	dsn, err := mysqlDSN(u)
+	if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("opening mysql connection: %w", err)
+	}
+	return db, nil
+}
+
+// openSQLite opens a SQLite connection, accepting the sqlite:// scheme, the
+// "file:" prefix, and plain filesystem paths.
+func openSQLite(u *url.URL, rawURL string) (*sql.DB, error) {
+	var path string
+	switch {
+	case u.Scheme == "sqlite":
+		path = u.Opaque
+	case strings.HasPrefix(rawURL, "file:"):
+		path = strings.TrimPrefix(rawURL, "file:")
+	default:
+		path = rawURL
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, fmt.Errorf("opening sqlite connection: %w", err)
+	}
+	return db, nil
 }
 
 // isPlainPath reports whether the raw string has no scheme component, i.e. it
